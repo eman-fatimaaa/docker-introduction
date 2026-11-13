@@ -1,13 +1,18 @@
-# Utiliser une image de base Node.js légère
+FROM node:18-alpine
 
-# Définir le répertoire de travail de l'application
+WORKDIR app
 
-# Copier les fichiers package.json et package-lock.json pour installer les dépendances
+COPY package.json package-lock.json ./
 
-# Copier les fichiers sources de l'application dans le conteneur
+RUN npm install
 
-# Installer les dépendances, construire l'application et nettoyer les modules Node.js
+COPY src ./src
+COPY public ./public
 
-# Exposer le port
+RUN npm install -g serve
+RUN npm run build
+RUN rm -fr node_modules
 
-# Démarrer l'application 
+EXPOSE 3000
+
+CMD ["serve", "-s", "build"]
