@@ -1,18 +1,22 @@
 
-FROM node:18-alpine
+# Stage 1: Build the application
+FROM node:22.23.5-alpine3.24 AS builder
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 
-RUN npm install
+RUN npm ci
 
 COPY . .
 
 RUN npm run build
 
-RUN npm install -g serve
+# Stage 2: Run the application
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24 AS production
 
-EXPOSE 3000
+COPY --from=builder --chown=101:101 /app/dist/ /usr/share/nginx/html/
 
-CMD ["serve", "-s", "dist", "-l", "3000"]
+USER 101
+
+EXPOSE 8080
