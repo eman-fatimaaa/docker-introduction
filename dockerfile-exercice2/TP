@@ -1,0 +1,485 @@
+# TP : Sécurisation d'une image et d'un conteneur Docker
+
+**Application :** Quiz Docker (`dockerfile-exercice2`)
+
+**Objectif :** Auditer et renforcer la sécurité d'une image et d'un conteneur Docker, puis comparer les résultats avant et après sécurisation.
+
+---
+
+# Mission 1 — Audit de l'image Docker existante
+
+## 1.1. Objectif
+
+L'objectif de cette mission est d'analyser l'image Docker initiale afin d'identifier les risques de sécurité avant toute modification.
+
+L'audit porte sur l'image de base, l'utilisateur d'exécution, la taille de l'image, ses différentes couches et les vulnérabilités détectées.
+
+## 1.2. Construction de l'image initiale
+
+Nous avons conservé le Dockerfile original sous le nom `Dockerfile.initial`.
+
+Commande utilisée :
+
+`docker build -f Dockerfile.initial -t quiz-docker:initial .`
+
+Cette commande permet de construire l'image à partir du Dockerfile initial sans modifier sa configuration.
+
+L'image obtenue est nommée `quiz-docker:initial`.
+
+## 1.3. Identification de l'image de base
+
+L'image initiale utilise :
+
+`FROM node:18-alpine`
+
+L'analyse des couches de l'image indique l'utilisation de **Node.js 18.20.8**.
+
+**Risque identifié :** Node.js 18 est une version en fin de vie. L'utilisation d'une version non maintenue peut exposer l'application à des vulnérabilités qui ne seront plus corrigées.
+
+**Amélioration recommandée :** Utiliser une version maintenue de Node.js et une image de base minimale.
+
+## 1.4. Vérification de l'utilisateur d'exécution
+
+Commandes utilisées :
+
+`docker image inspect quiz-docker:initial --format '{{.Config.User}}'`
+
+Cette commande n'a retourné aucune valeur, car aucun utilisateur n'était explicitement défini dans la configuration de l'image.
+
+Nous avons ensuite exécuté :
+
+`docker run --rm --entrypoint id quiz-docker:initial`
+
+Résultat :
+
+`uid=0(root) gid=0(root)`
+
+**Constat :** Le conteneur s'exécute avec l'utilisateur root.
+
+**Risque identifié :** L'utilisation du compte root augmente les conséquences possibles d'une compromission de l'application.
+
+**Amélioration recommandée :** Configurer un utilisateur non-root dans le Dockerfile.
+
+## 1.5. Analyse de la taille et des couches de l'image
+
+Commandes utilisées :
+
+`docker image ls quiz-docker`
+
+`docker history quiz-docker:initial`
+
+**Résultat : Taille de l'image initiale = 240 MB.**
+
+L'analyse des couches montre notamment les instructions suivantes :
+
+- `RUN npm install` : installation des dépendances de l'application.
+- `COPY . .` : copie du code source.
+- `RUN npm run build` : construction de l'application.
+- `RUN npm install -g serve` : installation d'un serveur web Node.js.
+- `CMD ["serve", "-s", "dist", "-l", "3000"]` : démarrage de l'application.
+
+**Constat :** L'image initiale conserve des composants nécessaires à la construction de l'application, alors qu'ils ne sont pas tous indispensables à son exécution.
+
+**Risque identifié :** La présence de logiciels et de dépendances supplémentaires augmente potentiellement la surface d'attaque.
+
+**Amélioration recommandée :** Utiliser un build multi-étapes pour séparer la construction de l'application de son exécution.
+
+## 1.6. Analyse des vulnérabilités
+
+Outil utilisé : **Docker Scout**.
+
+Commande :
+
+`docker scout cves quiz-docker:initial`
+
+Docker Scout a analysé 283 packages, dont 23 packages vulnérables, et détecté **218 vulnérabilités**.
+
+### Résultats de l'analyse initiale
+
+| Niveau de gravité | Nombre de vulnérabilités |
+|---|---:|
+| Critique (Critical) | 13 |
+| Élevée (High) | 92 |
+| Moyenne (Medium) | 94 |
+| Faible (Low) | 17 |
+| Non classée | 2 |
+| **Total** | **218** |
+
+Le rapport a été enregistré avec la commande :
+
+`docker scout cves quiz-docker:initial > audit-initial/cves.txt 2>&1`
+
+Le fichier `audit-initial/cves.txt` contient les détails des vulnérabilités détectées.
+
+## 1.7. Tableau d'audit initial
+
+| Critère | État initial | Risque identifié | Recommandation |
+|---|---|---|---|
+| Image de base | Node.js 18 Alpine | Version obsolète | Utiliser une version maintenue |
+| Utilisateur | root (UID 0) | Privilèges élevés | Utiliser un utilisateur non-root |
+| Taille | 240 MB | Présence possible de composants inutiles | Utiliser un build multi-étapes |
+| Dépendances | npm et serve présents | Surface d'attaque plus importante | Conserver uniquement les composants nécessaires |
+| Couches | Plusieurs couches de construction | Conservation de composants inutiles | Optimiser le Dockerfile |
+| CVE critiques | 13 | Vulnérabilités très graves | Corriger en priorité |
+| CVE élevées | 92 | Risques de sécurité importants | Mettre à jour les composants vulnérables |
+| CVE moyennes | 94 | Vulnérabilités de gravité moyenne | Vérifier et corriger |
+| CVE faibles | 17 | Vulnérabilités de faible gravité | Surveiller et corriger |
+| CVE non classées | 2 | Gravité à examiner | Analyser les résultats |
+| **Total CVE** | **218** | Nombre important de vulnérabilités connues | Renforcer l'image et effectuer un nouveau scan |
+
+## 1.8. Réponses aux questions d'analyse
+
+**1. L'image utilisée est-elle adaptée à une utilisation en production ?**
+
+Non, pas dans son état initial. Elle utilise une version obsolète de Node.js, fonctionne avec l'utilisateur root et présente 218 vulnérabilités connues. Une sécurisation est nécessaire avant d'envisager un déploiement en production.
+
+**2. Quels composants sont réellement nécessaires pour exécuter l'application ?**
+
+L'application Quiz Docker est une application web statique construite avec Vite. Son exécution nécessite principalement les fichiers générés dans le répertoire `dist` et un serveur web capable de les distribuer. Les outils de développement comme Vite et les dépendances de construction ne sont pas nécessaires dans l'image finale.
+
+**3. Quels risques de sécurité identifiez-vous ?**
+
+Les principaux risques identifiés sont l'utilisation d'une version obsolète de Node.js, l'exécution en tant que root, la présence de dépendances inutiles dans l'image finale et les vulnérabilités découvertes par Docker Scout.
+
+**4. Quelles améliorations recommanderiez-vous en priorité ?**
+
+Les améliorations prioritaires sont la mise à jour des images de base, l'utilisation d'un utilisateur non-root, la création d'un build multi-étapes, la réduction des privilèges et l'analyse régulière des vulnérabilités.
+
+### Conclusion de la Mission 1
+
+L'audit a révélé plusieurs risques de sécurité dans l'image `quiz-docker:initial`, notamment l'utilisation de l'utilisateur root et la présence de 218 vulnérabilités.
+
+Ces résultats montrent la nécessité de renforcer la configuration Docker avant un déploiement en production.
+
+---
+
+# Mission 2 — Sécuriser l'image et le conteneur Docker
+
+## 2.1. Objectif
+
+L'objectif de cette mission est d'appliquer les bonnes pratiques de sécurité afin de réduire la surface d'attaque de l'image et de limiter les privilèges du conteneur, tout en conservant le fonctionnement de l'application Quiz Docker.
+
+## 2.2. Création du fichier .dockerignore
+
+Nous avons créé un fichier `.dockerignore` dans le répertoire `dockerfile-exercice2`.
+
+Ce fichier permet d'exclure du contexte de construction les fichiers inutiles ou potentiellement sensibles, notamment :
+
+- `node_modules` : dépendances installées localement.
+- `dist` : fichiers déjà générés localement.
+- `.git` : historique Git.
+- `.env` et `.env.*` : fichiers pouvant contenir des informations sensibles.
+- `*.log` : fichiers journaux.
+- `audit-initial` et `audit-secure` : rapports d'audit.
+- `Dockerfile.initial` : sauvegarde de la configuration initiale.
+
+**Justification :** L'utilisation de `.dockerignore` permet de réduire les fichiers envoyés à Docker lors de la construction et d'éviter l'intégration accidentelle de données sensibles.
+
+## 2.3. Mise en place d'un Dockerfile multi-étapes
+
+Nous avons modifié le Dockerfile afin de séparer la construction de l'application de son exécution.
+
+### Étape 1 : Construction (Builder)
+
+Image utilisée :
+
+`FROM node:22.23.5-alpine3.24 AS builder`
+
+Cette étape utilise une version spécifique de Node.js 22 sur Alpine Linux.
+
+Les principales opérations sont :
+
+- `WORKDIR /app` : définit le répertoire de travail.
+- `COPY package.json package-lock.json ./` : copie les fichiers de dépendances.
+- `RUN npm ci` : installe les dépendances à partir du fichier lock.
+- `COPY . .` : copie les sources de l'application.
+- `RUN npm run build` : génère les fichiers de production dans `dist`.
+
+### Étape 2 : Production
+
+Image utilisée :
+
+`FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24 AS production`
+
+Cette deuxième étape utilise une image Nginx conçue pour fonctionner sans privilèges root.
+
+Principales instructions :
+
+- `COPY --from=builder --chown=101:101 /app/dist/ /usr/share/nginx/html/` : copie uniquement les fichiers construits et définit leur propriétaire.
+- `USER 101` : définit un utilisateur non-root.
+- `EXPOSE 8080` : indique le port interne utilisé par Nginx.
+
+**Justification :** Le build multi-étapes permet d'exclure les outils de développement de l'image finale. Il contribue à réduire la taille de l'image et sa surface d'attaque.
+
+## 2.4. Construction de l'image sécurisée
+
+Commande utilisée :
+
+`docker build --pull -t quiz-docker:secure .`
+
+Cette commande construit la nouvelle image avec le Dockerfile sécurisé et récupère les versions disponibles des images de base utilisées.
+
+**Résultat :** L'image `quiz-docker:secure` a été construite avec succès.
+
+## 2.5. Exécution du conteneur avec restrictions
+
+Nous avons exécuté le conteneur avec les paramètres de sécurité suivants :
+
+| Option Docker | Objectif |
+|---|---|
+| `--memory="256m"` | Limiter l'utilisation de la mémoire |
+| `--cpus="0.5"` | Limiter l'utilisation du processeur |
+| `--read-only` | Rendre le système de fichiers racine accessible uniquement en lecture |
+| `--tmpfs /tmp:rw,nosuid,size=64m` | Fournir un espace temporaire en mémoire |
+| `--security-opt no-new-privileges:true` | Empêcher l'acquisition de privilèges supplémentaires |
+| `--cap-drop ALL` | Retirer les capacités Linux par défaut |
+| `-p 127.0.0.1:8091:8080` | Rendre l'application accessible uniquement en local |
+
+Ces restrictions réduisent les ressources disponibles et limitent les possibilités d'action du conteneur.
+
+## 2.6. Vérification de l'utilisateur non-root
+
+Commande utilisée :
+
+`docker exec quiz-secure id`
+
+Résultat :
+
+`uid=101(nginx) gid=101(nginx) groups=101(nginx)`
+
+**Constat :** Le conteneur fonctionne désormais avec l'utilisateur `nginx` (UID 101), et non plus avec root (UID 0).
+
+Cela permet de réduire les privilèges du processus applicatif.
+
+## 2.7. Vérification des restrictions de sécurité
+
+Les commandes `docker inspect` ont permis de vérifier les paramètres d'exécution du conteneur.
+
+| Élément vérifié | Résultat obtenu |
+|---|---|
+| Utilisateur | `uid=101(nginx)` |
+| Système de fichiers en lecture seule | `true` |
+| Mémoire maximale | 268435456 octets (256 MiB) |
+| CPU maximal | 500000000 NanoCPUs (0,5 CPU) |
+| Linux capabilities | `["ALL"]` supprimées |
+| Acquisition de nouveaux privilèges | `no-new-privileges:true` |
+| Montages Docker | `[]` |
+| Socket Docker | Non monté |
+
+Le résultat `[]` signifie qu'aucun montage n'a été configuré dans le conteneur. Le socket Docker `/var/run/docker.sock` n'est donc pas exposé.
+
+## 2.8. Vérification du fonctionnement de l'application
+
+L'application a été testée depuis le navigateur à l'adresse :
+
+`http://localhost:8091`
+
+**Résultat :** L'application Quiz Docker fonctionne correctement après la sécurisation.
+
+Les restrictions mises en place n'ont donc pas empêché son fonctionnement lors des tests effectués.
+
+## 2.9. Bilan des recommandations appliquées
+
+| Bonne pratique | Mise en œuvre |
+|---|---|
+| Utiliser des images de base minimales | Images Alpine |
+| Ne pas exécuter en root | Utilisateur nginx (UID 101) |
+| Utiliser .dockerignore | Fichier créé |
+| Utiliser des tags précis | Versions spécifiques Node.js et Nginx |
+| Privilégier COPY à ADD | Instruction COPY utilisée |
+| Limiter les ressources | CPU et mémoire limités |
+| Limiter les privilèges | Read-only, no-new-privileges et cap-drop |
+| Utiliser un build multi-étapes | Étapes builder et production |
+| Protéger le socket Docker | Aucun montage du socket |
+| Vérifier la sécurité | Contrôles Docker inspect et nouvelle analyse Docker Scout |
+
+### Conclusion de la Mission 2
+
+La configuration Docker a été renforcée en appliquant plusieurs bonnes pratiques de sécurité.
+
+L'image utilise désormais un build multi-étapes, un serveur Nginx non-root et des versions spécifiques d'images de base.
+
+Le conteneur dispose également de restrictions sur les ressources, les privilèges et les accès au système de fichiers.
+
+L'application reste fonctionnelle après ces modifications.
+
+---
+
+# Mission 3 — Comparer les résultats avant et après sécurisation
+
+## 3.1. Objectif
+
+L'objectif est de mesurer les améliorations apportées lors de la Mission 2, en comparant l'image Docker initiale avec l'image sécurisée.
+
+Les critères étudiés sont notamment la taille de l'image, le nombre de packages, les vulnérabilités, les privilèges et les paramètres de sécurité.
+
+## 3.2. Comparaison de la taille des images
+
+Commande utilisée :
+
+`docker image ls quiz-docker`
+
+Résultats :
+
+| Image | Taille |
+|---|---:|
+| `quiz-docker:initial` | 240 MB |
+| `quiz-docker:secure` | 91,4 MB |
+
+La taille de l'image a diminué de **148,6 MB**, soit une réduction d'environ **61,9 %**.
+
+Cette diminution s'explique principalement par l'utilisation du build multi-étapes, qui évite de conserver Node.js et les dépendances de développement dans l'image finale.
+
+## 3.3. Nouvelle analyse des vulnérabilités
+
+Commande utilisée :
+
+`docker scout cves quiz-docker:secure`
+
+Le rapport a été sauvegardé avec :
+
+`docker scout cves quiz-docker:secure > audit-secure/cves.txt 2>&1`
+
+Docker Scout a analysé 88 packages et détecté 52 vulnérabilités concernant 8 packages vulnérables.
+
+### Comparaison des vulnérabilités
+
+| Niveau de gravité | Image initiale | Image sécurisée | Évolution |
+|---|---:|---:|---:|
+| Critique | 13 | 9 | -4 |
+| Élevée | 92 | 27 | -65 |
+| Moyenne | 94 | 6 | -88 |
+| Faible | 17 | 5 | -12 |
+| Non classée | 2 | 5 | +3 |
+| **Total** | **218** | **52** | **-166** |
+
+Le nombre total de vulnérabilités détectées est passé de **218 à 52**, soit une réduction d'environ **76,1 %**.
+
+Le nombre de packages analysés a également diminué, passant de 283 à 88.
+
+Ces résultats montrent une amélioration importante, même si certaines vulnérabilités restent présentes.
+
+## 3.4. Tableau comparatif global
+
+| Critère | Image initiale | Image sécurisée |
+|---|---|---|
+| Image de base | Node.js 18 Alpine | Node.js 22 Alpine + Nginx non-root |
+| Taille | 240 MB | 91,4 MB |
+| Utilisateur | root (UID 0) | nginx (UID 101) |
+| Build multi-étapes | Non | Oui |
+| .dockerignore | Non utilisé initialement | Utilisé |
+| Outils de développement | Présents dans l'image finale | Exclus de l'image finale |
+| Limitation mémoire | Non configurée dans le lancement initial | 256 MiB |
+| Limitation CPU | Non configurée dans le lancement initial | 0,5 CPU |
+| Système de fichiers en lecture seule | Non configuré initialement | Oui |
+| Acquisition de privilèges | Non restreinte explicitement | Bloquée |
+| Capabilities Linux | Par défaut | Supprimées |
+| Accès au socket Docker | Non vérifié initialement | Aucun montage |
+| Packages analysés | 283 | 88 |
+| Packages vulnérables | 23 | 8 |
+| CVE critiques | 13 | 9 |
+| CVE élevées | 92 | 27 |
+| CVE moyennes | 94 | 6 |
+| CVE faibles | 17 | 5 |
+| CVE non classées | 2 | 5 |
+| **Total des vulnérabilités** | **218** | **52** |
+
+## 3.5. Publication de l'image sécurisée sur Docker Hub
+
+L'image sécurisée a été publiée sur Docker Hub.
+
+Commandes utilisées :
+
+`docker tag quiz-docker:secure emanfatimaaa/quiz-docker:secure`
+
+`docker push emanfatimaaa/quiz-docker:secure`
+
+**Résultat :** L'image a été poussée avec succès sur Docker Hub.
+
+Image publiée : `emanfatimaaa/quiz-docker:secure`
+
+Cette opération permet de partager l'image Docker sécurisée et de la récupérer depuis un autre environnement Docker.
+
+## 3.6. Réponses aux questions d'analyse
+
+**1. Quelles modifications ont apporté les améliorations les plus significatives ?**
+
+Les améliorations les plus significatives sont le build multi-étapes, l'utilisation d'une image de base plus récente et minimale, et l'exécution de l'application avec un utilisateur non-root.
+
+La limitation des ressources et la suppression des privilèges supplémentaires renforcent également la sécurité du conteneur.
+
+**2. La taille de l'image a-t-elle diminué ? Pourquoi ?**
+
+Oui. La taille est passée de 240 MB à 91,4 MB, soit une diminution d'environ 61,9 %.
+
+Cette réduction s'explique principalement par la séparation de l'environnement de construction et de l'environnement d'exécution. Les dépendances de développement ne sont plus conservées dans l'image finale.
+
+**3. Quelles recommandations concernent le Dockerfile et lesquelles concernent l'exécution du conteneur ?**
+
+Les recommandations concernant le Dockerfile sont l'utilisation d'images minimales, le choix de versions précises, l'utilisation de COPY, la configuration d'un utilisateur non-root et la création d'un build multi-étapes.
+
+Le fichier `.dockerignore` intervient lors de la construction de l'image.
+
+Les recommandations concernant l'exécution sont les limitations CPU et mémoire, le système de fichiers en lecture seule, la suppression des capacités Linux, l'interdiction d'acquérir de nouveaux privilèges et la protection du socket Docker.
+
+**4. Votre image est-elle désormais totalement sécurisée ? Justifiez votre réponse.**
+
+Non. Malgré les améliorations apportées, Docker Scout détecte encore 52 vulnérabilités, dont 9 critiques et 27 élevées.
+
+La sécurisation réduit les risques, mais ne garantit jamais une protection totale. Les vulnérabilités restantes doivent être analysées pour déterminer si elles sont exploitables dans notre environnement.
+
+**5. Quelles mesures complémentaires proposeriez-vous pour un déploiement en production ?**
+
+Pour renforcer davantage la sécurité, il serait pertinent de :
+
+- Mettre régulièrement à jour les images et les dépendances.
+- Automatiser les analyses de vulnérabilités dans un pipeline CI/CD.
+- Examiner et corriger les vulnérabilités critiques et élevées restantes.
+- Utiliser des images de confiance et vérifier leur provenance.
+- Renforcer la gestion des secrets et des accès réseau.
+- Mettre en place une surveillance des conteneurs.
+- Envisager l'utilisation de Docker Hardened Images.
+
+## 3.7. Conclusion de la Mission 3
+
+La comparaison entre l'image initiale et l'image sécurisée montre une amélioration importante de la sécurité.
+
+La taille de l'image a diminué de **61,9 %**, tandis que le nombre de vulnérabilités détectées est passé de **218 à 52**, soit une réduction de **76,1 %**.
+
+De plus, le conteneur s'exécute désormais sans privilèges root, avec des limitations de ressources et des restrictions de sécurité supplémentaires.
+
+Ces améliorations réduisent la surface d'attaque et les conséquences potentielles d'une compromission.
+
+Cependant, la présence de vulnérabilités critiques et élevées montre qu'une analyse et une maintenance régulières restent nécessaires avant un déploiement en production.
+### 3.8. Liens vers les images Docker
+
+**Image Docker sécurisée :**
+
+https://hub.docker.com/repository/docker/emanfatimaaa/quiz-docker/tags
+
+**Nom de l'image :** `emanfatimaaa/quiz-docker:secure`
+
+**Commande pour télécharger l'image :**
+
+`docker pull emanfatimaaa/quiz-docker:secure`
+
+**Dépôt GitHub contenant le Dockerfile et les rapports d'audit :**
+
+https://github.com/eman-fatimaaa/docker-introduction/tree/main/dockerfile-exercice2
+---
+
+# Mission 4 — Docker Hardened Images
+
+**Statut : Non commencée**
+
+Cette mission consistera à réaliser le laboratoire officiel Docker consacré aux images renforcées (Docker Hardened Images), puis à comparer leurs propriétés de sécurité, leur contenu et leurs vulnérabilités avec notre image `quiz-docker:secure`.
+
+---
+
+# Bilan provisoire du TP
+
+Les trois premières missions ont permis d'identifier les faiblesses de l'image initiale, d'appliquer des mesures de sécurisation et de mesurer les améliorations obtenues.
+
+L'application Quiz Docker est toujours fonctionnelle après sécurisation.
+
+La Mission 4 permettra d'étudier une solution supplémentaire pour renforcer la sécurité des images Docker destinées à la production.
